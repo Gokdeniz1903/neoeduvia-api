@@ -4,7 +4,7 @@ const multer = require("multer");
 const fs = require("fs");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
-const { Configuration, OpenAIApi } = require("openai");
+const OpenAI = require("openai"); // Yeni sürüme uygun
 require("dotenv").config();
 
 const app = express();
@@ -15,12 +15,11 @@ app.use(express.json());
 
 const upload = multer({ dest: "uploads/" });
 
-const openai = new OpenAIApi(
-  new Configuration({
-    apiKey: process.env.OPENAI_API_KEY,
-  })
-);
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
+// Ana API endpointi (metin veya dosya ile dönüşüm)
 app.post("/api/convert", upload.single("file"), async (req, res) => {
   try {
     const mode = req.body.mode || "Özetle";
@@ -36,33 +35,38 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         const dataBuffer = fs.readFileSync(filePath);
         const pdfData = await pdfParse(dataBuffer);
         content = pdfData.text;
-      } else if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+      } else if (
+        mime ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      ) {
         const docData = await mammoth.extractRawText({ path: filePath });
         content = docData.value;
       } else {
-        content = "Desteklenmeyen dosya türü.";
+        return res
+          .status(415)
+          .json({ error: "Sadece PDF ve DOCX dosyaları desteklenmektedir." });
       }
 
-      fs.unlinkSync(filePath); // Dosyayı sil
+      fs.unlinkSync(filePath); // dosyayı sil
     } else {
-      return res.status(400).json({ error: "Hiçbir içerik alınamadı." });
+      return res.status(400).json({ error: "Metin veya dosya bekleniyor." });
     }
 
     const prompt = `${mode}: ${content}`;
 
-    const completion = await openai.createChatCompletion({
+    const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
     });
 
-    const output = completion.data.choices[0].message.content;
+    const output = completion.choices[0].message.content;
     res.json({ completion: output });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Sunucu hatası." });
+    console.error("API Hatası:", err);
+    res.status(500).json({ error: "Sunucu hatası. Detay için loglara bak." });
   }
 });
 
 app.listen(port, () => {
-  console.log(`API çalışıyor: http://localhost:${port}`);
+  console.log(`Sunucu çalışıyor: http://localhost:${port}`);
 });
