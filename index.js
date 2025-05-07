@@ -1,33 +1,68 @@
 const express = require("express");
 const cors = require("cors");
-const OpenAI = require("openai");
+const multer = require("multer");
+const fs = require("fs");
+const pdfParse = require("pdf-parse");
+const mammoth = require("mammoth");
+const { Configuration, OpenAIApi } = require("openai");
 require("dotenv").config();
 
 const app = express();
+const port = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const upload = multer({ dest: "uploads/" });
 
-app.post("/api/generate", async (req, res) => {
-  const { prompt } = req.body;
+const openai = new OpenAIApi(
+  new Configuration({
+    apiKey: process.env.OPENAI_API_KEY,
+  })
+);
 
+app.post("/api/convert", upload.single("file"), async (req, res) => {
   try {
-    const chatCompletion = await openai.chat.completions.create({
-      model: "gpt-4",
+    const mode = req.body.mode || "Özetle";
+    let content = "";
+
+    if (req.body.text) {
+      content = req.body.text;
+    } else if (req.file) {
+      const filePath = req.file.path;
+      const mime = req.file.mimetype;
+
+      if (mime === "application/pdf") {
+        const dataBuffer = fs.readFileSync(filePath);
+        const pdfData = await pdfParse(dataBuffer);
+        content = pdfData.text;
+      } else if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+        const docData = await mammoth.extractRawText({ path: filePath });
+        content = docData.value;
+      } else {
+        content = "Desteklenmeyen dosya türü.";
+      }
+
+      fs.unlinkSync(filePath); // Dosyayı sil
+    } else {
+      return res.status(400).json({ error: "Hiçbir içerik alınamadı." });
+    }
+
+    const prompt = `${mode}: ${content}`;
+
+    const completion = await openai.createChatCompletion({
+      model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
     });
 
-    res.json({ response: chatCompletion.choices[0].message.content });
+    const output = completion.data.choices[0].message.content;
+    res.json({ completion: output });
   } catch (err) {
-    console.error("OpenAI Hatası:", err.message);
-    res.status(500).json({ error: "OpenAI API hatası" });
+    console.error(err);
+    res.status(500).json({ error: "Sunucu hatası." });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Sunucu çalışıyor: http://localhost:${PORT}`);
+app.listen(port, () => {
+  console.log(`API çalışıyor: http://localhost:${port}`);
 });
