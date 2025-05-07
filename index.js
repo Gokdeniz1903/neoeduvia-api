@@ -1,4 +1,4 @@
-cconst express = require("express");
+const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
@@ -24,11 +24,12 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const mode = req.body.mode || "Metinleştir";
     let content = "";
 
-    // 1. Metin kutusu varsa al
+    // 1. Metin kutusundaki içerik varsa
     if (req.body.text) {
       content = req.body.text;
     }
-    // 2. Dosya varsa oku
+
+    // 2. Dosya yüklenmişse
     else if (req.file) {
       const filePath = req.file.path;
       const mime = req.file.mimetype;
@@ -46,12 +47,12 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         return res.status(415).json({ error: "Yalnızca PDF veya Word dosyası yükleyebilirsiniz." });
       }
 
-      fs.unlinkSync(filePath); // dosyayı sil
+      fs.unlinkSync(filePath); // geçici dosyayı sil
     } else {
       return res.status(400).json({ error: "Metin veya dosya bulunamadı." });
     }
 
-    // 🔊 Podcastleştirme modu → doğrudan seslendir
+    // 🔊 Podcastleştirme → metni seslendir
     if (mode === "Podcast senaryosu yap") {
       const speech = await openai.audio.speech.create({
         model: "tts-1",
@@ -69,23 +70,17 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       });
     }
 
-    // Diğer modlar → sadece metin (GPT)
-    const prompt = `${mode}: ${content}`;
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [{ role: "user", content: prompt }],
+    // Diğer modlar için (opsiyonel GPT kullanılabilir)
+    return res.json({
+      completion: content,
     });
-
-    const output = completion.choices[0].message.content;
-    res.json({ completion: output });
-
   } catch (err) {
     console.error("HATA:", err);
-    res.status(500).json({ error: "Sunucu hatası" });
+    res.status(500).json({ error: "Sunucu hatası." });
   }
 });
 
-// Statik ses dosyası erişimi
+// MP3 dosyalarını sunmak için
 app.use("/audio", express.static("uploads"));
 
 app.listen(port, () => {
