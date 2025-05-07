@@ -1,10 +1,10 @@
-const express = require("express");
+cconst express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
-const OpenAI = require("openai"); // Yeni sürüme uygun
+const OpenAI = require("openai");
 require("dotenv").config();
 
 const app = express();
@@ -19,41 +19,58 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Ana API endpointi (metin veya dosya ile dönüşüm)
 app.post("/api/convert", upload.single("file"), async (req, res) => {
   try {
-    const mode = req.body.mode || "Özetle";
+    const mode = req.body.mode || "Metinleştir";
     let content = "";
 
+    // 1. Metin kutusu varsa al
     if (req.body.text) {
       content = req.body.text;
-    } else if (req.file) {
+    }
+    // 2. Dosya varsa oku
+    else if (req.file) {
       const filePath = req.file.path;
       const mime = req.file.mimetype;
 
       if (mime === "application/pdf") {
-        const dataBuffer = fs.readFileSync(filePath);
-        const pdfData = await pdfParse(dataBuffer);
-        content = pdfData.text;
+        const buffer = fs.readFileSync(filePath);
+        const parsed = await pdfParse(buffer);
+        content = parsed.text;
       } else if (
-        mime ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       ) {
-        const docData = await mammoth.extractRawText({ path: filePath });
-        content = docData.value;
+        const parsed = await mammoth.extractRawText({ path: filePath });
+        content = parsed.value;
       } else {
-        return res
-          .status(415)
-          .json({ error: "Sadece PDF ve DOCX dosyaları desteklenmektedir." });
+        return res.status(415).json({ error: "Yalnızca PDF veya Word dosyası yükleyebilirsiniz." });
       }
 
       fs.unlinkSync(filePath); // dosyayı sil
     } else {
-      return res.status(400).json({ error: "Metin veya dosya bekleniyor." });
+      return res.status(400).json({ error: "Metin veya dosya bulunamadı." });
     }
 
-    const prompt = `${mode}: ${content}`;
+    // 🔊 Podcastleştirme modu → doğrudan seslendir
+    if (mode === "Podcast senaryosu yap") {
+      const speech = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova",
+        input: content,
+      });
 
+      const buffer = Buffer.from(await speech.arrayBuffer());
+      const filename = `output-${Date.now()}.mp3`;
+      fs.writeFileSync(`./uploads/${filename}`, buffer);
+
+      return res.json({
+        audioUrl: `/audio/${filename}`,
+        originalText: content,
+      });
+    }
+
+    // Diğer modlar → sadece metin (GPT)
+    const prompt = `${mode}: ${content}`;
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
@@ -61,11 +78,15 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
 
     const output = completion.choices[0].message.content;
     res.json({ completion: output });
+
   } catch (err) {
-    console.error("API Hatası:", err);
-    res.status(500).json({ error: "Sunucu hatası. Detay için loglara bak." });
+    console.error("HATA:", err);
+    res.status(500).json({ error: "Sunucu hatası" });
   }
 });
+
+// Statik ses dosyası erişimi
+app.use("/audio", express.static("uploads"));
 
 app.listen(port, () => {
   console.log(`Sunucu çalışıyor: http://localhost:${port}`);
