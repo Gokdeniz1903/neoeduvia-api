@@ -14,24 +14,19 @@ const PORT = process.env.PORT || 10000;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// 📂 Statik klasörler
+// ✅ Statik klasörleri sun
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/history", express.static(path.join(__dirname, "history")));
 
 app.use(cors());
 app.use(express.json());
 
-// 📂 uploads klasörü yoksa oluştur
-const uploadPath = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadPath)) {
-  fs.mkdirSync(uploadPath);
-}
+// 📂 Klasörler yoksa oluştur
+const uploadsPath = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath);
 
-// 📂 history klasörü yoksa oluştur
 const historyPath = path.join(__dirname, "history");
-if (!fs.existsSync(historyPath)) {
-  fs.mkdirSync(historyPath);
-}
+if (!fs.existsSync(historyPath)) fs.mkdirSync(historyPath);
 
 const upload = multer({ dest: "uploads/" });
 
@@ -40,7 +35,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     let inputText = req.body.text || "";
     const mode = req.body.mode || "Kısa ve öz özetle";
 
-    // 1. Dosya varsa işle
+    // 1. Dosya geldiyse işle
     if (req.file) {
       const filePath = path.join(__dirname, req.file.path);
       const ext = path.extname(req.file.originalname).toLowerCase();
@@ -53,7 +48,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         const data = await mammoth.extractRawText({ path: filePath });
         inputText = data.value;
       } else {
-        return res.status(400).json({ error: "Sadece PDF ve Word dosyaları desteklenir." });
+        return res.status(400).json({ error: "Yalnızca PDF veya Word dosyaları destekleniyor." });
       }
 
       fs.unlinkSync(filePath); // geçici dosyayı sil
@@ -63,7 +58,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Boş metin gönderilemez." });
     }
 
-    // 2. OpenAI prompt
+    // 2. OpenAI'den içerik al
     const prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -76,7 +71,6 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const doc = new Document({
       sections: [
         {
-          properties: {},
           children: [new Paragraph({ children: [new TextRun(output)] })],
         },
       ],
@@ -87,15 +81,14 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const filePath = path.join(historyPath, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // 4. Yanıt gönder
+    // 4. API yanıtı gönder
     res.json({
       completion: output,
       downloadUrl: `/history/${filename}`,
     });
-
   } catch (err) {
-    console.error("❌ Hata:", err);
-    res.status(500).json({ error: "Sunucu hatası: " + err.message });
+    console.error("❌ Sunucu hatası:", err);
+    res.status(500).json({ error: "İç işlem hatası: " + err.message });
   }
 });
 
