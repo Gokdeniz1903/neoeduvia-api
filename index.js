@@ -6,8 +6,8 @@ const path = require("path");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 const { Document, Packer, Paragraph, TextRun } = require("docx");
-require("dotenv").config();
 const { OpenAI } = require("openai");
+require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -17,11 +17,10 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 app.use(cors());
 app.use(express.json());
 
-// ✅ Statik dosya servisleri
+// 🔧 Statik klasörler
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use("/history", express.static(path.join(__dirname, "history"))); // 🔥 Bu kritik
+app.use("/history", express.static(path.join(__dirname, "history")));
 
-// 📂 Klasörleri oluştur
 if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 if (!fs.existsSync("history")) fs.mkdirSync("history");
 
@@ -32,7 +31,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     let inputText = req.body.text || "";
     const mode = req.body.mode || "Kısa ve öz özetle";
 
-    // Dosya varsa oku
+    // 🔍 Dosya içeriği okunursa
     if (req.file) {
       const filePath = path.join(__dirname, req.file.path);
       const ext = path.extname(req.file.originalname).toLowerCase();
@@ -52,7 +51,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Boş metin gönderilemez." });
     }
 
-    // OpenAI ile yanıt al
+    // ✨ GPT-3.5 ile dönüştür
     const prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -61,27 +60,43 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
 
     const output = completion.choices[0].message.content;
 
-    // DOCX dosyası oluştur
+    // 🎧 Eğer Podcast ise → TTS üret
+    let audioUrl = null;
+    if (mode === "Podcast senaryosu yap") {
+      const speechResponse = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "nova", // dilersen "onyx", "shimmer" da olabilir
+        input: output.slice(0, 4000), // max 4096 karakter
+      });
+
+      const filename = `podcast-${Date.now()}.mp3`;
+      const filePath = path.join(__dirname, "history", filename);
+      const buffer = Buffer.from(await speechResponse.arrayBuffer());
+      fs.writeFileSync(filePath, buffer);
+      audioUrl = `https://neoeduvia-api.onrender.com/history/${filename}`;
+    }
+
+    // 📄 DOCX çıktı oluştur
     const doc = new Document({
       sections: [{
         children: [new Paragraph({ children: [new TextRun(output)] })],
       }],
     });
 
-    const buffer = await Packer.toBuffer(doc);
-    const filename = `output-${Date.now()}.docx`;
-    const filepath = path.join(__dirname, "history", filename);
-    fs.writeFileSync(filepath, buffer); // 📁 Dosya gerçekten yazılıyor mu?
+    const docBuffer = await Packer.toBuffer(doc);
+    const docFilename = `output-${Date.now()}.docx`;
+    const docPath = path.join(__dirname, "history", docFilename);
+    fs.writeFileSync(docPath, docBuffer);
 
-    // Yanıt
+    // 🎯 Yanıtla
     res.json({
       completion: output,
-      downloadUrl: `https://neoeduvia-api.onrender.com/history/${filename}`,
- // ✅ Bu path Render ile uyumlu
+      downloadUrl: `https://neoeduvia-api.onrender.com/history/${docFilename}`,
+      ...(audioUrl && { audioUrl }), // varsa ekle
     });
 
   } catch (err) {
-    console.error("❌ Sunucu hatası:", err);
+    console.error("❌ Hata:", err);
     res.status(500).json({ error: "Sunucu hatası: " + err.message });
   }
 });
