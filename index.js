@@ -76,7 +76,8 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     // Yanıt
     res.json({
       completion: output,
-      downloadUrl: `/history/${filename}`, // ✅ Bu path Render ile uyumlu
+      downloadUrl: `https://neoeduvia-api.onrender.com/history/${filename}`,
+ // ✅ Bu path Render ile uyumlu
     });
 
   } catch (err) {
