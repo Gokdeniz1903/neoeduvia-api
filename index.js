@@ -24,12 +24,12 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const mode = req.body.mode || "Metinleştir";
     let content = "";
 
-    // 🔹 1. Kullanıcının yazdığı metin varsa al
+    // 🔹 1. Kullanıcının metin girmesi durumu
     if (req.body.text) {
       content = req.body.text;
     }
 
-    // 🔹 2. Dosya yüklendiyse içeriğini oku
+    // 🔹 2. Dosya yükleme ve içeriği alma
     else if (req.file) {
       const filePath = req.file.path;
       const mime = req.file.mimetype;
@@ -49,50 +49,44 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         });
       }
 
-      fs.unlinkSync(filePath); // temp dosyayı sil
+      fs.unlinkSync(filePath); // geçici dosya silinir
     }
 
-    // ❗ Hiçbir içerik yoksa durdur
+    // 🔻 İçerik boşsa durdur
     if (!content || content.trim().length === 0) {
       return res.status(400).json({ error: "Seslendirilecek içerik boş." });
     }
 
-    // 🎧 TTS (Podcastleştirme): Metin veya dosyadan gelen içeriği seslendir
+    // 🎧 PODCASTLEŞTİRME
     if (mode === "Podcast senaryosu yap") {
-  if (!content || content.trim().length === 0) {
-    return res.status(400).json({ error: "Seslendirilecek içerik boş." });
-  }
+      try {
+        if (content.length > 4096) {
+          console.warn("📏 İçerik uzunluğu:", content.length, "→ İlk 4096 karaktere indiriliyor.");
+          content = content.slice(0, 4096);
+        }
 
-  // 💡 Uzun içerikler TTS sınırına göre kesiliyor
-  if (content.length > 4096) {
-    console.warn("İÇERİK ÇOK UZUN, KESİLİYOR!");
-    content = content.slice(0, 4096);
-  }
+        const speech = await openai.audio.speech.create({
+          model: "tts-1",
+          voice: "nova",
+          input: content,
+        });
 
-  try {
-    const speech = await openai.audio.speech.create({
-      model: "tts-1",
-      voice: "nova",
-      input: content,
-    });
+        const buffer = Buffer.from(await speech.arrayBuffer());
+        const filename = `output-${Date.now()}.mp3`;
+        fs.writeFileSync(`./uploads/${filename}`, buffer);
 
-    const buffer = Buffer.from(await speech.arrayBuffer());
-    const filename = `output-${Date.now()}.mp3`;
-    fs.writeFileSync(`./uploads/${filename}`, buffer);
+        return res.json({
+          audioUrl: `/audio/${filename}`,
+          originalText: content,
+        });
 
-    return res.json({
-      audioUrl: `/audio/${filename}`,
-      originalText: content,
-    });
+      } catch (err) {
+        console.error("🛑 TTS HATASI:", err);
+        return res.status(500).json({ error: "Ses dosyası üretilemedi." });
+      }
+    }
 
-  } catch (err) {
-    console.error("TTS HATASI:", err);
-    return res.status(500).json({ error: "Ses dosyası üretilemedi." });
-  }
-}
-
-
-    // 🎨 Görselleştirme: GPT betimleme → DALL·E görseli
+    // 🎨 GÖRSELLEŞTİRME (DALL·E)
     if (mode === "Görsel olarak tarif et") {
       const dallePrompt = `Aşağıdaki konuyu DALL·E tarafından çizilebilir şekilde tarif et. 
 Diyagram, kavram haritası, semboller ve açıklayıcı etiketler içerecek biçimde tanımla. 
@@ -108,15 +102,15 @@ Konu: ${content}`;
       return res.json({ imageUrl });
     }
 
-    // ✍️ Hikaye ve özet gibi diğer metin bazlı modlar
+    // ✍️ METİN MODLARI: hikayeleştirme, özetleme, vs.
     let prompt = "";
 
     if (mode === "Hikayeye dönüştür") {
       prompt = `Aşağıdaki metni kısa, duygusal ve anlamlı bir hikâyeye dönüştür. 
-Giriş, gelişme ve sonuç yapısı içersin. \n${content}`;
+Giriş, gelişme ve sonuç yapısı içersin:\n\n${content}`;
     } else if (mode === "Kısa ve öz özetle") {
       prompt = `Aşağıdaki metni kısa, sade ve maddeler halinde özetle. 
-En önemli bilgileri öne çıkar. \n${content}`;
+En önemli bilgileri öne çıkar:\n\n${content}`;
     } else {
       prompt = `${mode}: ${content}`;
     }
@@ -131,12 +125,13 @@ En önemli bilgileri öne çıkar. \n${content}`;
 
   } catch (err) {
     console.error("GENEL HATA:", err);
-    res.status(500).json({ error: "Sunucu tarafında bir sorun oluştu." });
+    res.status(500).json({ error: "Sunucu tarafında bir hata oluştu." });
   }
 });
 
+// 🎵 MP3 ses dosyaları için statik erişim
 app.use("/audio", express.static("uploads"));
 
 app.listen(port, () => {
-  console.log(`Sunucu çalışıyor: http://localhost:${port}`);
+  console.log(`✅ Sunucu çalışıyor: http://localhost:${port}`);
 });
