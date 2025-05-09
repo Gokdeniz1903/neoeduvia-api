@@ -24,11 +24,12 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const mode = req.body.mode || "Metinleştir";
     let content = "";
 
-    // 1. Metin varsa
+    // 1. Kullanıcının metin girmesi durumu
     if (req.body.text) {
       content = req.body.text;
     }
-    // 2. Dosya varsa
+
+    // 2. Kullanıcının dosya yüklemesi durumu
     else if (req.file) {
       const filePath = req.file.path;
       const mime = req.file.mimetype;
@@ -43,15 +44,19 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         const parsed = await mammoth.extractRawText({ path: filePath });
         content = parsed.value;
       } else {
-        return res.status(415).json({ error: "Yalnızca PDF veya Word dosyası yükleyebilirsiniz." });
+        return res.status(415).json({
+          error: "Yalnızca PDF veya Word dosyası yükleyebilirsiniz.",
+        });
       }
 
-      fs.unlinkSync(filePath);
+      fs.unlinkSync(filePath); // temp dosyayı sil
     } else {
-      return res.status(400).json({ error: "Metin veya dosya bulunamadı." });
+      return res
+        .status(400)
+        .json({ error: "Metin veya dosya yüklenmesi gerekiyor." });
     }
 
-    // 🎧 TTS (sesli podcast)
+    // 🔊 Podcastleştirme → içerik seslendirilecekse
     if (mode === "Podcast senaryosu yap") {
       const speech = await openai.audio.speech.create({
         model: "tts-1",
@@ -69,7 +74,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       });
     }
 
-    // 🎨 Görsel üretim (DALL·E)
+    // 🎨 Görsel oluşturma → içerik GPT ile görselleştirilecekse
     if (mode === "Görsel olarak tarif et") {
       const dallePrompt = `Aşağıdaki konuyu DALL·E tarafından çizilebilir şekilde tarif et. 
 Diyagram, kavram haritası, semboller ve açıklayıcı etiketler içerecek biçimde tanımla. 
@@ -85,18 +90,20 @@ Konu: ${content}`;
       return res.json({ imageUrl });
     }
 
-    // 🧠 Metin işleme modları için özel prompt üret
+    // 🧠 Diğer modlar için GPT promtları
     let prompt = "";
 
     if (mode === "Hikayeye dönüştür") {
       prompt = `Aşağıdaki metni kısa, duygusal ve anlamlı bir hikâyeye dönüştür. 
-Giriş, gelişme ve sonuç yapısını içersin. Duygusal yönü vurgula: \n${content}`;
+Giriş, gelişme ve sonuç yapısı içersin. \n${content}`;
     } else if (mode === "Kısa ve öz özetle") {
-      prompt = `Aşağıdaki metni kısa, sade ve maddeler halinde özetle. En önemli bilgileri öne çıkar: \n${content}`;
+      prompt = `Aşağıdaki metni kısa, sade ve maddeler halinde özetle. 
+En önemli bilgileri öne çıkar. \n${content}`;
     } else {
       prompt = `${mode}: ${content}`;
     }
 
+    // GPT-3.5 çıktısı üret
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
@@ -111,6 +118,7 @@ Giriş, gelişme ve sonuç yapısını içersin. Duygusal yönü vurgula: \n${co
   }
 });
 
+// MP3 dosyaları için statik yol
 app.use("/audio", express.static("uploads"));
 
 app.listen(port, () => {
