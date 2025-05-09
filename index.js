@@ -1,112 +1,56 @@
 const express = require("express");
-const cors = require("cors");
 const multer = require("multer");
+const cors = require("cors");
 const fs = require("fs");
+const path = require("path");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
-const OpenAI = require("openai");
+const { OpenAI } = require("openai");
 const { Document, Packer, Paragraph, TextRun } = require("docx");
 require("dotenv").config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.use(cors());
 app.use(express.json());
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/history", express.static(path.join(__dirname, "history")));
 
 const upload = multer({ dest: "uploads/" });
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-// 📂 MP3 ve DOCX çıktılar için statik klasörler
-app.use("/audio", express.static("uploads"));
-app.use("/history", express.static("history"));
-
 app.post("/api/convert", upload.single("file"), async (req, res) => {
   try {
-    const mode = req.body.mode || "Metinleştir";
-    let content = "";
+    let inputText = req.body.text || "";
+    const mode = req.body.mode || "Kısa ve öz özetle";
 
-    // 🔹 1. Metin girilmişse onu kullan
-    if (req.body.text) {
-      content = req.body.text;
-    }
+    // 1. Dosya varsa işlenir
+    if (req.file) {
+      const filePath = path.join(__dirname, req.file.path);
+      const fileExt = path.extname(req.file.originalname).toLowerCase();
 
-    // 🔹 2. Dosya varsa içeriğini oku
-    else if (req.file) {
-      const filePath = req.file.path;
-      const mime = req.file.mimetype;
-
-      if (mime === "application/pdf") {
-        const buffer = fs.readFileSync(filePath);
-        const parsed = await pdfParse(buffer);
-        content = parsed.text;
-      } else if (
-        mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      ) {
-        const parsed = await mammoth.extractRawText({ path: filePath });
-        content = parsed.value;
+      if (fileExt === ".pdf") {
+        const dataBuffer = fs.readFileSync(filePath);
+        const data = await pdfParse(dataBuffer);
+        inputText = data.text;
+      } else if (fileExt === ".docx" || fileExt === ".doc") {
+        const data = await mammoth.extractRawText({ path: filePath });
+        inputText = data.value;
       } else {
-        return res.status(415).json({ error: "Sadece PDF ve Word dosyaları destekleniyor." });
+        return res.status(400).json({ error: "Desteklenmeyen dosya türü." });
       }
 
-      fs.unlinkSync(filePath); // geçici dosyayı sil
+      fs.unlinkSync(filePath); // temp dosyayı sil
     }
 
-    if (!content || content.trim().length === 0) {
-      return res.status(400).json({ error: "İçerik boş." });
+    if (!inputText.trim()) {
+      return res.status(400).json({ error: "Metin boş olamaz." });
     }
 
-    // 🔊 Podcast TTS
-    if (mode === "Podcast senaryosu yap") {
-      if (content.length > 4096) {
-        content = content.slice(0, 4096);
-      }
-
-      const speech = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "nova",
-        input: content,
-      });
-
-      const buffer = Buffer.from(await speech.arrayBuffer());
-      const filename = `output-${Date.now()}.mp3`;
-      fs.writeFileSync(`./uploads/${filename}`, buffer);
-
-      return res.json({
-        audioUrl: `/audio/${filename}`,
-        originalText: content,
-      });
-    }
-
-    // 🖼️ Görsel (DALL·E)
-    if (mode === "Görsel olarak tarif et") {
-      const dallePrompt = `Aşağıdaki konuyu DALL·E tarafından çizilebilir şekilde tarif et.
-Diyagram, kavram haritası, semboller ve açıklayıcı etiketler içerecek biçimde tanımla:
-\n${content}`;
-
-      const dalleResult = await openai.images.generate({
-        prompt: dallePrompt,
-        n: 1,
-        size: "1024x1024",
-      });
-
-      const imageUrl = dalleResult.data[0].url;
-      return res.json({ imageUrl });
-    }
-
-    // 🧠 GPT Metin Modları
-    let prompt = "";
-
-    if (mode === "Hikayeye dönüştür") {
-      prompt = `Aşağıdaki metni kısa, duygusal ve anlamlı bir hikâyeye dönüştür:\n${content}`;
-    } else if (mode === "Kısa ve öz özetle") {
-      prompt = `Aşağıdaki metni kısa, sade ve maddeler halinde özetle:\n${content}`;
-    } else {
-      prompt = `${mode}: ${content}`;
-    }
+    // 2. OpenAI prompt hazırlanır
+    const prompt = `${mode}:\n\n${inputText.trim().slice(0, 4000)}`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -115,40 +59,37 @@ Diyagram, kavram haritası, semboller ve açıklayıcı etiketler içerecek biç
 
     const output = completion.choices[0].message.content;
 
-    // 📝 DOCX dosyası oluştur
+    // 3. DOCX çıktısı hazırlanır
     const doc = new Document({
       sections: [
         {
+          properties: {},
           children: [
             new Paragraph({
-              children: [
-                new TextRun({
-                  text: output,
-                  font: "Arial",
-                  size: 24,
-                }),
-              ],
+              children: [new TextRun(output)],
             }),
           ],
         },
       ],
     });
 
-    const docxBuffer = await Packer.toBuffer(doc);
-    const docxFilename = `output-${Date.now()}.docx`;
-    fs.writeFileSync(`./history/${docxFilename}`, docxBuffer);
+    const buffer = await Packer.toBuffer(doc);
+    const filename = `output-${Date.now()}.docx`;
+    const filePath = path.join(__dirname, "history", filename);
+    fs.writeFileSync(filePath, buffer);
 
+    // 4. Yanıt döndürülür
     res.json({
       completion: output,
-      downloadUrl: `/history/${docxFilename}`,
+      downloadUrl: `/history/${filename}`,
     });
 
   } catch (err) {
-    console.error("GENEL HATA:", err);
-    res.status(500).json({ error: "Sunucu hatası." });
+    console.error("Sunucu hatası:", err);
+    res.status(500).json({ error: "Sunucu hatası: " + err.message });
   }
 });
 
-app.listen(port, () => {
-  console.log(`✅ Sunucu çalışıyor: http://localhost:${port}`);
+app.listen(PORT, () => {
+  console.log(`✅ Sunucu çalışıyor: http://localhost:${PORT}`);
 });
