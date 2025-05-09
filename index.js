@@ -24,12 +24,11 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const mode = req.body.mode || "Metinleştir";
     let content = "";
 
-    // 1. Metin kutusundaki içerik varsa
+    // 1. Metin varsa
     if (req.body.text) {
       content = req.body.text;
     }
-
-    // 2. Dosya yüklenmişse
+    // 2. Dosya varsa
     else if (req.file) {
       const filePath = req.file.path;
       const mime = req.file.mimetype;
@@ -47,12 +46,12 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         return res.status(415).json({ error: "Yalnızca PDF veya Word dosyası yükleyebilirsiniz." });
       }
 
-      fs.unlinkSync(filePath); // geçici dosyayı sil
+      fs.unlinkSync(filePath);
     } else {
       return res.status(400).json({ error: "Metin veya dosya bulunamadı." });
     }
 
-    // 🔊 Podcastleştirme → metni seslendir
+    // 🎧 TTS (sesli podcast)
     if (mode === "Podcast senaryosu yap") {
       const speech = await openai.audio.speech.create({
         model: "tts-1",
@@ -70,17 +69,48 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       });
     }
 
-    // Diğer modlar için (opsiyonel GPT kullanılabilir)
-    return res.json({
-      completion: content,
+    // 🎨 Görsel üretim (DALL·E)
+    if (mode === "Görsel olarak tarif et") {
+      const dallePrompt = `Aşağıdaki konuyu DALL·E tarafından çizilebilir şekilde tarif et. 
+Diyagram, kavram haritası, semboller ve açıklayıcı etiketler içerecek biçimde tanımla. 
+Konu: ${content}`;
+
+      const dalleResult = await openai.images.generate({
+        prompt: dallePrompt,
+        n: 1,
+        size: "1024x1024",
+      });
+
+      const imageUrl = dalleResult.data[0].url;
+      return res.json({ imageUrl });
+    }
+
+    // 🧠 Metin işleme modları için özel prompt üret
+    let prompt = "";
+
+    if (mode === "Hikayeye dönüştür") {
+      prompt = `Aşağıdaki metni kısa, duygusal ve anlamlı bir hikâyeye dönüştür. 
+Giriş, gelişme ve sonuç yapısını içersin. Duygusal yönü vurgula: \n${content}`;
+    } else if (mode === "Kısa ve öz özetle") {
+      prompt = `Aşağıdaki metni kısa, sade ve maddeler halinde özetle. En önemli bilgileri öne çıkar: \n${content}`;
+    } else {
+      prompt = `${mode}: ${content}`;
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: prompt }],
     });
+
+    const output = completion.choices[0].message.content;
+    res.json({ completion: output });
+
   } catch (err) {
     console.error("HATA:", err);
     res.status(500).json({ error: "Sunucu hatası." });
   }
 });
 
-// MP3 dosyalarını sunmak için
 app.use("/audio", express.static("uploads"));
 
 app.listen(port, () => {
