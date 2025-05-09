@@ -24,12 +24,12 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const mode = req.body.mode || "Metinleştir";
     let content = "";
 
-    // 1. Kullanıcının metin girmesi durumu
+    // 🔹 1. Kullanıcının yazdığı metin varsa al
     if (req.body.text) {
       content = req.body.text;
     }
 
-    // 2. Kullanıcının dosya yüklemesi durumu
+    // 🔹 2. Dosya yüklendiyse içeriğini oku
     else if (req.file) {
       const filePath = req.file.path;
       const mime = req.file.mimetype;
@@ -45,36 +45,43 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         content = parsed.value;
       } else {
         return res.status(415).json({
-          error: "Yalnızca PDF veya Word dosyası yükleyebilirsiniz.",
+          error: "Yalnızca PDF ve Word (.docx) dosyaları destekleniyor.",
         });
       }
 
       fs.unlinkSync(filePath); // temp dosyayı sil
-    } else {
-      return res
-        .status(400)
-        .json({ error: "Metin veya dosya yüklenmesi gerekiyor." });
     }
 
-    // 🔊 Podcastleştirme → içerik seslendirilecekse
+    // ❗ Hiçbir içerik yoksa durdur
+    if (!content || content.trim().length === 0) {
+      return res.status(400).json({ error: "Seslendirilecek içerik boş." });
+    }
+
+    // 🎧 TTS (Podcastleştirme): Metin veya dosyadan gelen içeriği seslendir
     if (mode === "Podcast senaryosu yap") {
-      const speech = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "nova",
-        input: content,
-      });
+      try {
+        const speech = await openai.audio.speech.create({
+          model: "tts-1",
+          voice: "nova",
+          input: content,
+        });
 
-      const buffer = Buffer.from(await speech.arrayBuffer());
-      const filename = `output-${Date.now()}.mp3`;
-      fs.writeFileSync(`./uploads/${filename}`, buffer);
+        const buffer = Buffer.from(await speech.arrayBuffer());
+        const filename = `output-${Date.now()}.mp3`;
+        fs.writeFileSync(`./uploads/${filename}`, buffer);
 
-      return res.json({
-        audioUrl: `/audio/${filename}`,
-        originalText: content,
-      });
+        return res.json({
+          audioUrl: `/audio/${filename}`,
+          originalText: content,
+        });
+
+      } catch (err) {
+        console.error("TTS HATASI:", err);
+        return res.status(500).json({ error: "Ses dosyası üretilemedi." });
+      }
     }
 
-    // 🎨 Görsel oluşturma → içerik GPT ile görselleştirilecekse
+    // 🎨 Görselleştirme: GPT betimleme → DALL·E görseli
     if (mode === "Görsel olarak tarif et") {
       const dallePrompt = `Aşağıdaki konuyu DALL·E tarafından çizilebilir şekilde tarif et. 
 Diyagram, kavram haritası, semboller ve açıklayıcı etiketler içerecek biçimde tanımla. 
@@ -90,7 +97,7 @@ Konu: ${content}`;
       return res.json({ imageUrl });
     }
 
-    // 🧠 Diğer modlar için GPT promtları
+    // ✍️ Hikaye ve özet gibi diğer metin bazlı modlar
     let prompt = "";
 
     if (mode === "Hikayeye dönüştür") {
@@ -103,7 +110,6 @@ En önemli bilgileri öne çıkar. \n${content}`;
       prompt = `${mode}: ${content}`;
     }
 
-    // GPT-3.5 çıktısı üret
     const completion = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
@@ -113,12 +119,11 @@ En önemli bilgileri öne çıkar. \n${content}`;
     res.json({ completion: output });
 
   } catch (err) {
-    console.error("HATA:", err);
-    res.status(500).json({ error: "Sunucu hatası." });
+    console.error("GENEL HATA:", err);
+    res.status(500).json({ error: "Sunucu tarafında bir sorun oluştu." });
   }
 });
 
-// MP3 dosyaları için statik yol
 app.use("/audio", express.static("uploads"));
 
 app.listen(port, () => {
