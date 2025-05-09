@@ -86,14 +86,24 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       audioUrl = `https://neoeduvia-api.onrender.com/history/${audioFilename}`;
     } else {
       // 🧠 GPT ile özetleme, hikayeleştirme, vs.
-      const prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
-      const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: prompt }],
-      });
+      let prompt = "";
 
-      finalText = completion.choices[0].message.content;
-    }
+// Mode’a göre özel prompt ayarla
+if (mode === "Bilişsel Metinleştirme") {
+  prompt = `
+Aşağıdaki metni öğrencinin anlamlı öğrenmesini kolaylaştıracak şekilde yeniden yaz:
+- Girişe kısa bir özet ekle.
+- Metni kavramsal bloklara ayır ve başlıklar koy.
+- Anahtar kavramları kalın yap.
+- Gerekirse hatırlatıcı kutular (örneğin: "Unutma:", "Örnek:") ekle.
+- Akademik ama sade bir dil kullan.
+
+Metin:
+${inputText.slice(0, 4000)}
+  `;
+} else {
+  prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
+}
 
     // 📄 DOCX çıktısı oluştur
     const doc = new Document({
