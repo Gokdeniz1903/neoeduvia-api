@@ -52,7 +52,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     let audioUrl = null;
 
     // 🔉 Podcast
-    if (mode === "Podcast senaryosu yap") {
+    if (mode === "Sesli Anlatıya Dönüştür") {
       const lineCount = inputText.split("\n").length;
       const avgLineLength = inputText.length / lineCount;
       const isLikelySlides = lineCount >= 8 && avgLineLength < 80;
