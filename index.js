@@ -59,27 +59,38 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
 
     // 🎧 TTS (Podcastleştirme): Metin veya dosyadan gelen içeriği seslendir
     if (mode === "Podcast senaryosu yap") {
-      try {
-        const speech = await openai.audio.speech.create({
-          model: "tts-1",
-          voice: "nova",
-          input: content,
-        });
+  if (!content || content.trim().length === 0) {
+    return res.status(400).json({ error: "Seslendirilecek içerik boş." });
+  }
 
-        const buffer = Buffer.from(await speech.arrayBuffer());
-        const filename = `output-${Date.now()}.mp3`;
-        fs.writeFileSync(`./uploads/${filename}`, buffer);
+  // 💡 Uzun içerikler TTS sınırına göre kesiliyor
+  if (content.length > 4096) {
+    console.warn("İÇERİK ÇOK UZUN, KESİLİYOR!");
+    content = content.slice(0, 4096);
+  }
 
-        return res.json({
-          audioUrl: `/audio/${filename}`,
-          originalText: content,
-        });
+  try {
+    const speech = await openai.audio.speech.create({
+      model: "tts-1",
+      voice: "nova",
+      input: content,
+    });
 
-      } catch (err) {
-        console.error("TTS HATASI:", err);
-        return res.status(500).json({ error: "Ses dosyası üretilemedi." });
-      }
-    }
+    const buffer = Buffer.from(await speech.arrayBuffer());
+    const filename = `output-${Date.now()}.mp3`;
+    fs.writeFileSync(`./uploads/${filename}`, buffer);
+
+    return res.json({
+      audioUrl: `/audio/${filename}`,
+      originalText: content,
+    });
+
+  } catch (err) {
+    console.error("TTS HATASI:", err);
+    return res.status(500).json({ error: "Ses dosyası üretilemedi." });
+  }
+}
+
 
     // 🎨 Görselleştirme: GPT betimleme → DALL·E görseli
     if (mode === "Görsel olarak tarif et") {
