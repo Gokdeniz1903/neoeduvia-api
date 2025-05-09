@@ -51,7 +51,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     let finalText = "";
     let audioUrl = null;
 
-    // 🔉 Podcast senaryosu
+    // 🔉 Podcast
     if (mode === "Podcast senaryosu yap") {
       const lineCount = inputText.split("\n").length;
       const avgLineLength = inputText.length / lineCount;
@@ -81,7 +81,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       audioUrl = `https://neoeduvia-api.onrender.com/history/${audioFilename}`;
     }
 
-    // 🧠 Diğer modlar (özetleme, hikayeleştirme, bilişsel metinleştirme)
+    // 🧠 Bilişsel Metinleştirme
     else if (mode === "Bilişsel Metinleştirme") {
       const prompt = `
 Aşağıdaki metni öğrencinin anlamlı öğrenmesini kolaylaştıracak şekilde yeniden yaz:
@@ -101,7 +101,30 @@ ${inputText.slice(0, 4000)}
       });
 
       finalText = completion.choices[0].message.content;
-    } else {
+    }
+
+    // 📖 Hikayeleştirme
+    else if (mode === "Hikayeye Dönüştür") {
+      const prompt = `
+Öğrencinin yaşadığı bir olayla başla. Konuya bu bağlamda geçiş yap.
+Aşağıdaki metni bir öğrencinin günlük hayatına entegre ederek bir hikâyeye dönüştür. 
+Karakter bu kavramları öğrenmeye çalışsın ve örneklerle anlamaya çalışsın. 
+Duygusal ve sade bir dille yaz. Metin 450 ila 600 kelime arasında olsun.
+
+Metin:
+${inputText.slice(0, 4000)}
+      `;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      finalText = completion.choices[0].message.content;
+    }
+
+    // 📄 Diğer modlar (Özetle, Anlatıcı Dil vb.)
+    else {
       const prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
       const completion = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
