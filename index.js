@@ -29,7 +29,6 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     let inputText = req.body.text || "";
     const mode = req.body.mode || "Kısa ve öz özetle";
 
-    // 📂 Dosya içeriği okunuyorsa
     if (req.file) {
       const filePath = path.join(__dirname, req.file.path);
       const ext = path.extname(req.file.originalname).toLowerCase();
@@ -42,7 +41,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         inputText = data.value;
       }
 
-      fs.unlinkSync(filePath); // Geçici dosyayı sil
+      fs.unlinkSync(filePath);
     }
 
     if (!inputText.trim()) {
@@ -52,16 +51,13 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     let finalText = "";
     let audioUrl = null;
 
-    // 🔉 Podcastleştirme için özel durum
+    // 🔉 Podcast senaryosu
     if (mode === "Podcast senaryosu yap") {
-      // Otomatik analiz: slayt mı, metin mi?
       const lineCount = inputText.split("\n").length;
       const avgLineLength = inputText.length / lineCount;
-
       const isLikelySlides = lineCount >= 8 && avgLineLength < 80;
 
       if (isLikelySlides) {
-        // 🎯 Konuşma diline uygun hale getir
         const conversionPrompt = `Aşağıdaki slayt tarzı metni sade, doğal bir anlatımla bir konuşma gibi yeniden düzenle:\n\n${inputText.slice(0, 4000)}`;
         const conversion = await openai.chat.completions.create({
           model: "gpt-3.5-turbo",
@@ -69,10 +65,9 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
         });
         finalText = conversion.choices[0].message.content;
       } else {
-        finalText = inputText.slice(0, 4000); // doğrudan oku
+        finalText = inputText.slice(0, 4000);
       }
 
-      // 🔊 TTS ses oluştur
       const speechResponse = await openai.audio.speech.create({
         model: "tts-1",
         voice: "nova",
@@ -84,28 +79,38 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       const buffer = Buffer.from(await speechResponse.arrayBuffer());
       fs.writeFileSync(audioPath, buffer);
       audioUrl = `https://neoeduvia-api.onrender.com/history/${audioFilename}`;
-    } else {
-      // 🧠 GPT ile özetleme, hikayeleştirme, vs.
-      let prompt = "";
+    }
 
-// Mode’a göre özel prompt ayarla
-if (mode === "Bilişsel Metinleştirme") {
-  prompt = `
+    // 🧠 Diğer modlar (özetleme, hikayeleştirme, bilişsel metinleştirme)
+    else if (mode === "Bilişsel Metinleştirme") {
+      const prompt = `
 Aşağıdaki metni öğrencinin anlamlı öğrenmesini kolaylaştıracak şekilde yeniden yaz:
 - Girişe kısa bir özet ekle.
 - Metni kavramsal bloklara ayır ve başlıklar koy.
-- Anahtar kavramları kalın yap.
+- Anahtar kavramları **kalın** yap.
 - Gerekirse hatırlatıcı kutular (örneğin: "Unutma:", "Örnek:") ekle.
 - Akademik ama sade bir dil kullan.
 
 Metin:
 ${inputText.slice(0, 4000)}
-  `;
-} else {
-  prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
-}
+      `;
 
-    // 📄 DOCX çıktısı oluştur
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      finalText = completion.choices[0].message.content;
+    } else {
+      const prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      finalText = completion.choices[0].message.content;
+    }
+
     const doc = new Document({
       sections: [{
         children: [new Paragraph({ children: [new TextRun(finalText)] })],
@@ -117,7 +122,6 @@ ${inputText.slice(0, 4000)}
     const docPath = path.join(__dirname, "history", docFilename);
     fs.writeFileSync(docPath, docBuffer);
 
-    // ✅ Yanıtla
     res.json({
       completion: finalText,
       downloadUrl: `https://neoeduvia-api.onrender.com/history/${docFilename}`,
