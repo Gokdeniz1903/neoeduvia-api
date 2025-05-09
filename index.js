@@ -11,13 +11,11 @@ require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.use(cors());
 app.use(express.json());
 
-// 🔧 Statik klasörler
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use("/history", express.static(path.join(__dirname, "history")));
 
@@ -31,7 +29,7 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     let inputText = req.body.text || "";
     const mode = req.body.mode || "Kısa ve öz özetle";
 
-    // 🔍 Dosya içeriği okunursa
+    // 📂 Dosya içeriği okunuyorsa
     if (req.file) {
       const filePath = path.join(__dirname, req.file.path);
       const ext = path.extname(req.file.originalname).toLowerCase();
@@ -51,35 +49,56 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Boş metin gönderilemez." });
     }
 
-    // ✨ GPT-3.5 ile dönüştür
-    const prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const output = completion.choices[0].message.content;
-
-    // 🎧 Eğer Podcast ise → TTS üret
+    let finalText = "";
     let audioUrl = null;
+
+    // 🔉 Podcastleştirme için özel durum
     if (mode === "Podcast senaryosu yap") {
+      // Otomatik analiz: slayt mı, metin mi?
+      const lineCount = inputText.split("\n").length;
+      const avgLineLength = inputText.length / lineCount;
+
+      const isLikelySlides = lineCount >= 8 && avgLineLength < 80;
+
+      if (isLikelySlides) {
+        // 🎯 Konuşma diline uygun hale getir
+        const conversionPrompt = `Aşağıdaki slayt tarzı metni sade, doğal bir anlatımla bir konuşma gibi yeniden düzenle:\n\n${inputText.slice(0, 4000)}`;
+        const conversion = await openai.chat.completions.create({
+          model: "gpt-3.5-turbo",
+          messages: [{ role: "user", content: conversionPrompt }],
+        });
+        finalText = conversion.choices[0].message.content;
+      } else {
+        finalText = inputText.slice(0, 4000); // doğrudan oku
+      }
+
+      // 🔊 TTS ses oluştur
       const speechResponse = await openai.audio.speech.create({
         model: "tts-1",
-        voice: "nova", // dilersen "onyx", "shimmer" da olabilir
-        input: output.slice(0, 4000), // max 4096 karakter
+        voice: "nova",
+        input: finalText,
       });
 
-      const filename = `podcast-${Date.now()}.mp3`;
-      const filePath = path.join(__dirname, "history", filename);
+      const audioFilename = `podcast-${Date.now()}.mp3`;
+      const audioPath = path.join(__dirname, "history", audioFilename);
       const buffer = Buffer.from(await speechResponse.arrayBuffer());
-      fs.writeFileSync(filePath, buffer);
-      audioUrl = `https://neoeduvia-api.onrender.com/history/${filename}`;
+      fs.writeFileSync(audioPath, buffer);
+      audioUrl = `https://neoeduvia-api.onrender.com/history/${audioFilename}`;
+    } else {
+      // 🧠 GPT ile özetleme, hikayeleştirme, vs.
+      const prompt = `${mode}:\n\n${inputText.slice(0, 4000)}`;
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      finalText = completion.choices[0].message.content;
     }
 
-    // 📄 DOCX çıktı oluştur
+    // 📄 DOCX çıktısı oluştur
     const doc = new Document({
       sections: [{
-        children: [new Paragraph({ children: [new TextRun(output)] })],
+        children: [new Paragraph({ children: [new TextRun(finalText)] })],
       }],
     });
 
@@ -88,11 +107,11 @@ app.post("/api/convert", upload.single("file"), async (req, res) => {
     const docPath = path.join(__dirname, "history", docFilename);
     fs.writeFileSync(docPath, docBuffer);
 
-    // 🎯 Yanıtla
+    // ✅ Yanıtla
     res.json({
-      completion: output,
+      completion: finalText,
       downloadUrl: `https://neoeduvia-api.onrender.com/history/${docFilename}`,
-      ...(audioUrl && { audioUrl }), // varsa ekle
+      ...(audioUrl && { audioUrl }),
     });
 
   } catch (err) {
